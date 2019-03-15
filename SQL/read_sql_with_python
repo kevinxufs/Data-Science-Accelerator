@@ -1,0 +1,18 @@
+import os
+
+os.chdir('/Users/datascience9/Desktop/Accelerator')
+import psycopg2
+from sqlalchemy import create_engine
+
+import pandas as pd
+
+engine = create_engine('postgresql://localhost/hs2data')
+
+table_name = 'air_quality'
+
+df = pd.read_sql_table(table_name, engine)
+
+
+df2 = pd.read_csv('complete_noise_data_lsoa.csv')
+
+df2.to_sql("complete_noise_data_lsoa", engine)
