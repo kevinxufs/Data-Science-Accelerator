@@ -1,0 +1,256 @@
+# STEP 1: initial data prep
+
+# Functions and data prep libraries --------------------------------------------------------------
+# 
+
+
+library(dplyr)
+library(rgdal)
+library(raster)
+library(tidyverse)
+library(leaflet)
+library(shiny)
+library(lazyeval)
+library(plyr)
+library(timeDate)
+setwd("~/Desktop/Accelerator")
+
+# Gets the colour of a row given its pollution level and type. Currently values are set by quartile,
+# but will be later hardcoded against limits
+get_color <- function(pollution, type) {
+  if (!is.na(pollution)){
+    if (type %in% "noise") {
+      
+      if(pollution <= 56.67) {
+        return("green")
+      } else if(pollution <= 61.55) {
+        return("blue")
+      } else if(pollution <= 66.48) {
+        return("orange")
+      }
+      else {
+        return("red")
+      } 
+      
+    } else if (type %in% "air"){
+      if(pollution <= 7.60) {
+        return("green")
+      } else if(pollution <= 11.80) {
+        return("blue")
+      } else if(pollution <= 17.6) {
+        return("orange")
+      } else if(pollution > 50) {
+        return("black")
+      }
+      else {
+        return("red")
+      } 
+      
+    }
+  }else {
+    
+    return(NA)
+  }
+  
+}
+
+# Establishes whether an hour is a working hour or not. Working hours are 7 am - 7pm inclusive.
+working_hour <- function(hour){
+  if (hour < 20 & hour >6) {
+    return(TRUE)
+  } else {
+    return(FALSE)
+  }
+}
+
+#Takes in path to a .shp file, reads it and then transforms it to make it suitable for presentation.
+#The shp file produced can be used on map overlays and compared against latitude and longitudes.
+
+#path_to_shp_file is the file path to the shape file
+shp_file_reader <- function(path_to_shp_file){
+  
+  shp <- readOGR(path_to_shp_file)
+  shp <- spTransform(shp, CRS("+init=epsg:4326"))
+  
+  
+  return(shp)
+  
+}
+
+
+
+#Takes a set of data and creates a row for each unique location creating columns for latitude, longitude and a 
+#unique location identifer. Then calculates the average pollution level at each location over time.
+
+#input_table is a complete set of data containing latitude, longitude, pollution and location id columns
+#lat_column is the column name of input_table that contains the latitude
+#long_column is the column name of input_table that contains the longitude
+#id column is the column name of input_table that contains the location id 
+#pol_column is the column name of input_table that contains the pollution level
+
+
+id_input_table_maker <- function(input_table, id_column, lat_column, long_column, pol_column){
+  
+  id_table <- input_table %>%
+    #Each location has a specific latitude and longitude.
+    group_by( get(id_column), get(lat_column), get(long_column)) %>%
+    
+    #Calculate the average pollution level  
+    dplyr::summarise(pollution = mean(get(pol_column), na.rm = TRUE))%>%
+    ungroup()
+  
+  colnames(id_table) <- c(id_column, lat_column, long_column, pol_column)
+  
+  
+  return(id_table)
+}
+
+#The shape file will contain different boundaries, in our case we are using LSOAs. This function compares the location data produced by
+#id_input_table_maker against the LSOAs in the shape file and indicates which lsoa each location is in.
+
+#input_table is a condensed version of the data with unique identifier, produced as a result of id_input_table_maker 
+#shapefile is a .shp file that will be used as an overlay
+#lat_column is the column name of input_table that contains the latitude
+#long_column is the column name of input_table that contains the longitude
+lat_long_to_lsoa_dataframe <- function(input_table, shapefile, lat_column, long_column){
+  
+  #Produces a dataframe containing only the latitude and longitude
+  lat_long_table <- input_table %>% dplyr::select(lat = long_column, long = lat_column) 
+  
+  # convert data frame to SpatialPoints class
+  coordinates(lat_long_table) <- ~lat+long
+  # make sure the two files share the same CRS
+  lat_long_table@proj4string <- shapefile@proj4string
+  
+  #Creates a dataframe that maps the latitude / longitude points onto specific areas contained in the shape data 
+  points_in_shape <- over(lat_long_table, shapefile) 
+  
+  #Binds the above dataframe so that it has the unique identifier. The end result is a dataframe containing identifier
+  #Latitude, longitude and specific areas of the shape data that these identifiers are matched to. For example
+  #If the shape data is of lsoa's, then the end dataframe will map each lat/long to an lsoa.
+  complete_table <- input_table %>%
+    cbind(points_in_shape)
+  
+  
+  return(complete_table)  
+}
+
+
+
+# Applying functions to get LSOA matches ----------------------------------
+
+main_shape <- shp_file_reader('/Users/datascience9/Desktop/Accelerator/Lower_Layer_Super_Output_Areas_December_2011_Generalised_Clipped__Boundaries_in_England_and_Wales/Lower_Layer_Super_Output_Areas_December_2011_Generalised_Clipped__Boundaries_in_England_and_Wales.shp')
+
+# NOISE
+noise <- read.csv('noise_quality/completenoisedatav2csv.csv')
+
+noise <- noise%>%
+  dplyr::rename(monitor_ref = monitor_ef)
+
+noise_condensed <- id_input_table_maker(noise, 'monitor_ref', 'latitude', 'longitude', 'lpaeq_T')
+
+noise_lsoa <- lat_long_to_lsoa_dataframe(noise_condensed, main_shape, 'latitude', 'longitude')
+
+
+# AIR
+
+air <- read.csv('air_quality/completedatav2csv.csv')
+
+air_condensed <- id_input_table_maker(air, 'monitor_ref', 'latitude', 'longitude', 'pm10_particles_ug_m_3')
+
+air_lsoa <- lat_long_to_lsoa_dataframe(air_condensed, main_shape, 'latitude', 'longitude')
+
+
+# Connecting location LSOA data back to original data source -----------------------
+
+
+
+
+noise_merge <- merge(x = noise, y = noise_lsoa[, c('lsoa11cd', 'lsoa11nm', 'lsoa11nmw', 'st_areasha', 'st_lengths', 'monitor_ref')], by.x = 'monitor_ref', by.y = 'monitor_ref', all.x = TRUE)
+
+air_merge <- merge(x = air, y = air_lsoa[, c('lsoa11cd', 'lsoa11nm', 'lsoa11nmw', 'st_areasha', 'st_lengths', 'monitor_ref')], by.x = 'monitor_ref', by.y = 'monitor_ref', all.x = TRUE)
+
+# Additional modifications on date.
+
+noise_merge <- noise_merge %>%
+  mutate (date = as.Date(date_time, format = '%Y-%m-%d'), 
+          time = strftime(as.POSIXct(as.character(date_time), format = '%Y-%m-%d %H:%M:%S'), format = '%H:%M:%S')) %>%
+  mutate(full_date_time = as.POSIXct(as.character(date_time), format = '%Y-%m-%d %H:%M:%S' )) %>%
+  mutate(hour_time = as.numeric(format(as.POSIXct(time,format="%H:%M:%S"),"%H")))
+
+
+
+air_merge <- air_merge %>%
+  mutate (date = as.Date(date_time, format = '%d/%m/%Y'), 
+          time = strftime(as.POSIXct(as.character(date_time), format = '%d/%m/%Y %H:%M:%S'), format = '%H:%M:%S')) %>%
+  mutate(full_date_time = as.POSIXct(as.character(date_time), format = '%d-%m-%Y %H:%M:%S' )) %>%
+  mutate(hour_time = as.numeric(format(as.POSIXct(time,format="%H:%M:%S"),"%H")))%>%
+  mutate(min_time =as.numeric(format(as.POSIXct(time,format="%H:%M:%S"),"%M")))
+
+
+
+# Creating a single pollution level column and splitting data by pollution type --------
+
+
+
+noise_merge <- noise_merge %>%
+  mutate(pollution_type = 'noise') %>%
+  dplyr::rename(pollution_level = lpaeq_T,
+                location = location_2)%>%
+  dplyr::select(-one_of(c('lpaf_max', 'lpa90_T')))
+
+air_merge <- air_merge %>%
+  mutate(pollution_type = 'air')%>%
+  dplyr::rename(pollution_level = pm10_particles_ug_m_3,
+                location = location_2)
+
+
+# Creating one central data frame -----------------------------------------
+
+
+
+combine <- c('date', 'time', 'latitude', 'longitude', 'hour_time', 'lsoa11nm', 'pollution_level', 'pollution_type', 'location', 'monitor_ref')
+
+pollution_data <- rbind(air_merge[,combine], noise_merge[, combine])
+
+pollution_data %>%
+  group_by(round(pollution_level, -2))%>%
+  dplyr::summarise(count = n())
+
+pollution_data <- pollution_data %>%
+  mutate(min_time = as.numeric(format(as.POSIXct(time,format="%H:%M:%S"),"%M")))
+
+
+# Adjoining the colour column by applying colour function on each row
+i = 1
+while (i <= nrow(pollution_data)){
+  pollution_data[i, 'colour'] = get_color(pollution_data[i, 'pollution_level'], pollution_data[i, 'pollution_type'])
+  i= i+1
+  if (i%%100 == 0){
+    print(i)}
+  
+}
+
+
+# Some final modifications  -----------------------------------------------
+
+# pollution_data will be the main dataset we are using 
+
+
+pollution_data$day_of_week <- weekdays(as.Date(pollution_data$date))
+pollution_data$is_weekend<- isWeekend(as.Date(pollution_data$date))
+pollution_data$is_working_hour <- 'No'
+pollution_data$is_working_hour[which(pollution_data$hour_time < 20 & pollution_data$hour_time > 6)] <- 'Yes'
+
+saveRDS(pollution_data, 'pollution_data.rds')
+
+
+# Inputs for next steps ---------------------------------------------------
+
+
+main_shape <- shp_file_reader('/Users/datascience9/Desktop/Accelerator/Lower_Layer_Super_Output_Areas_December_2011_Generalised_Clipped__Boundaries_in_England_and_Wales/Lower_Layer_Super_Output_Areas_December_2011_Generalised_Clipped__Boundaries_in_England_and_Wales.shp')
+
+pollution_data <- readRDS('pollution_data.rds')
+
+summary(pollution_data$hour_time)
+
