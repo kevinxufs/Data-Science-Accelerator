@@ -1,0 +1,139 @@
+# The data must be preprocessed! Many algorithms for example require dummying and binning
+
+library(dplyr)
+library(rgdal)
+library(raster)
+library(tidyverse)
+library(leaflet)
+library(shiny)
+library(lazyeval)
+library(plyr)
+library(timeDate)
+library(caret)
+
+# Replace with dataset of choice
+pure_dummy_noise <- readRDS('pure_dummy_noise.rds')
+
+# Creates a partition of the data, splitting it 75% into training data and 25% into testdata. Data partitions ensure the data
+# is split proportionally between classifications.
+index <- createDataPartition(pure_dummy_noise$is_exceed, p=0.75, list=FALSE)
+trainSet <- pure_dummy_noise[ index,]
+testSet <- pure_dummy_noise[-index,]  
+
+
+# Can check the different proportions. Here we have chosen column 'is_exceed' as our dependent variable. This will need to be changed
+# for your own dataset
+
+trainSet%>%
+  group_by(is_exceed)%>%
+  dplyr::summarise(count=n())
+colnames(trainSet)
+
+# This tells R information about how to fit models, for example how many iterations, and whether we need probabilities.
+fit_control <- trainControl(## 10-fold CV
+  method = "repeatedcv",
+  number = 10,
+  repeats = 2,
+  classProbs = TRUE,
+  verboseIter = TRUE)
+
+# Some examples of models. Check the caret github page for a list of models that caret can run, and then just modify 'method'.
+
+rf_fit  <- train(is_exceed ~ ., 
+                 data = trainSet, 
+                 method = "ranger",
+                 # tuneLength = 5,
+                 trControl = fit_control,
+                 importance = 'permutation'
+)
+# In this model we have reduced the training set to only a sample of 500 in order to increase speed.
+knn_noise_fit <- train(is_exceed ~ ., 
+                       data = trainSet[sample(1:nrow(trainSet), 500),], 
+                       method = "knn",
+                       # tuneLength = 5,
+                       trControl = fit_control,
+                       importance = 'permutation')
+
+
+# In this model we have reduced the training set to a sample of 10000, we have also removed two variables, 'monitor_ref' and 'lsoa'
+log_fit <- train(is_exceed ~ ., 
+                 data = trainSet[sample(1:nrow(trainSet),10000), !grepl('monitor_ref|lsoa', colnames(trainSet)) ], 
+                 method = "LogitBoost",
+                 # tuneLength = 5,
+                 trControl = fit_control,
+                 importance = TRUE)
+
+# By running these models you can see how well the model predicts the training data
+log_fit
+knn_noise_fit
+svm_fit
+rf_fit
+
+
+
+# This allows us to use our model to predict the test data. Since we asked for probabilities, we create a new column for
+# the classification choice. In this example we assumed a binary classification problem
+predictionrf = predict(rf_model, newdata = testSet, type = 'prob')%>%
+  mutate(pred = ifelse(exceed > 0.5, 'exceed', 'not_exceed'))
+
+# Allows us to see the confusion matrix
+cmrf <- confusionMatrix(as.factor(predictionrf$pred), as.factor(testSet$is_exceed))
+
+
+# Function to allow you to visualise your confusion matrix
+draw_confusion_matrix <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#3F97D0')
+  text(195, 435, 'Exceed', cex=1.2)
+  rect(250, 430, 340, 370, col='#F7AD50')
+  text(295, 435, 'Not Exceed', cex=1.2)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+  text(245, 450, 'Actual', cex=1.3, font=2)
+  rect(150, 305, 240, 365, col='#F7AD50')
+  rect(250, 305, 340, 365, col='#3F97D0')
+  text(140, 400, 'Exceed', cex=1.2, srt=90)
+  text(140, 335, 'Not Exceed', cex=1.2, srt=90)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+}  
+
+# Example usage
+draw_confusion_matrix(cmrf)
+
+
+# Allows us to see the variable importance. Note this only works for certain algorithms.
+varImp(rf_fit)
+
+# Make sure you save your model
+saveRDS(rf_fit, 'rf_model.rds')
+
