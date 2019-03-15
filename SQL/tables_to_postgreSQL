@@ -1,0 +1,26 @@
+CREATE TABLE air_quality (
+Date_Time TEXT, 
+GPS_reference_1 TEXT,
+GPS_reference_2 TEXT,
+Grid_reference TEXT,
+Latitude TEXT,
+Location_2 TEXT,
+London_Borough TEXT,
+Longitude TEXT,
+Monitor_Ref TEXT,
+PM10_particles_ug_m_3 TEXT,
+Postcode TEXT,
+Unnamed_2 TEXT,
+Unnamed_3 TEXT,
+Worksite_Ref TEXT
+);
+
+COPY air_quality FROM '/Users/datascience9/Desktop/Accelerator/air_quality/completedatav2csv.csv' DELIMITER ',' CSV;
+
+
+CREATE TABLE noise_quality (
+
+date_time TEXT ,"period_T" TEXT,"lpaeq_T" TEXT,"lpaf_max" TEXT,"lpa90_T" TEXT ,monitor_ef TEXT ,location_1 TEXT ,location_2 TEXT,gps_reference_1 TEXT ,gps_reference_2 TEXT,grid_reference TEXT,latitude TEXT ,longitude TEXT,postcode TEXT,worksite_ref TEXT
+
+
+)
