@@ -22,6 +22,7 @@ datasets = ['sep17.xlsx',
  'hs2_airquality_data_areasouth_june_2018.xlsx',
  'hs2_airquality_data_february_2018.xlsx']
 
+#Select the source directory with all of the files
 os.chdir('/Users/datascience9/Desktop/air quality')
 
 
@@ -47,7 +48,7 @@ for lists in all_rows:
     
     
     
-#Create an empty dataframe with the following column names. This dataframe will be filled to produce an excel and csv file of
+#Create an empty dataframe with the following column names. This dataframe will be populated filled to produce an excel and csv file of
 #all of the air quality data
 
 col = ['Date/Time', 'PM10 particles (ug/m^3)', 'Monitor Ref', 'Location 2', 'London Borough', 'GPS reference 1', 'GPS reference 2', 'Grid reference', 'Latitude', 'Longitude', 'Postcode', 'Worksite Ref']
@@ -80,6 +81,8 @@ for file in datasets:
         df['Longitude'] = completedic[ref][6]
         df['Postcode'] = completedic[ref][7]
         df['Worksite Ref'] = completedic[ref][8]
+        
+        #concatenate the dataframe to the master dataframe
         completedf = pd.concat([completedf, df])
         
         
